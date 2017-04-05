@@ -3,15 +3,15 @@
 // Encryption Tool
 // February 21, 2017
 
-#include "cryptlib.h"
-#include "osrng.h"
-#include "pwdbased.h"
-#include "hex.h"
-#include "sha3.h"
-#include "filters.h"
-#include "files.h"
-#include "modes.h"
-#include "base64.h"
+#include "cryptopp\cryptlib.h"
+#include "cryptopp\osrng.h"
+#include "cryptopp\pwdbased.h"
+#include "cryptopp\hex.h"
+#include "cryptopp\sha3.h"
+#include "cryptopp\filters.h"
+#include "cryptopp\files.h"
+#include "cryptopp\modes.h"
+#include "cryptopp\base64.h"
 
 #include <fstream>
 #include <iostream>
@@ -19,7 +19,6 @@
 
 using namespace std;
 using namespace CryptoPP;
-//using CryptoPP::SHA3_512;
 
 void printText(string rawText, const char* prefix);
 void printKey(SecByteBlock& key, const char* prefix);
