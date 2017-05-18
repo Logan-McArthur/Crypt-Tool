@@ -3,6 +3,8 @@
 // Encryption Tool
 // February 21, 2017
 
+
+
 #include "cryptopp\cryptlib.h"
 #include "cryptopp\osrng.h"
 #include "cryptopp\pwdbased.h"
@@ -12,10 +14,13 @@
 #include "cryptopp\files.h"
 #include "cryptopp\modes.h"
 #include "cryptopp\base64.h"
+#include "cryptopp\winpipes.h"
 
 #include <fstream>
 #include <iostream>
 #include <string>
+
+#include <boost\program_options.hpp>
 
 using namespace std;
 using namespace CryptoPP;
@@ -29,13 +34,14 @@ string decrypt(SecByteBlock& decryptionKey, byte iv[], int ivLength, string ciph
 bool verifyHMAC(SecByteBlock& key, string mac, string cipherText);
 
 void readFile(string fileName, SecByteBlock& salt, string& hmac, byte iv[], string& cipherText);
+void readStream(istream& input, SecByteBlock& salt, string& hmac, byte iv[], string& cipherText);
 void generateKeys(string, string, string, SecByteBlock&, SecByteBlock&, SecByteBlock&, SecByteBlock&);
 
 template <class T>
 int performHmacForKey(SecByteBlock& key, SecByteBlock& resultKey, const char* saltInput, int saltSize);
 
-void encryptFile(string password, string inputFileName, string outputFileName);
-void decryptFile(string password, string inputFileName, string outputFileName);
+void encryptFile(string password, string inputFileName, string outputFileName, bool streamBased);
+void decryptFile(string password, string inputFileName, string outputFileName, bool streamBased);
 
 #define SALT_SIZE 32
 #define MASTER_KEY_SIZE 64
@@ -44,34 +50,103 @@ void decryptFile(string password, string inputFileName, string outputFileName);
 #define ENCRYPTION_KEY_SALT "EncryptionKeySalt"
 #define HMAC_SALT "HMACSalt to be used"
 
-int main()
+
+
+namespace po = boost::program_options;
+
+// Arguments: 
+// Command line flags: -d (decrypt) -p
+//
+int main(int argc, char* argv[])
 {
 
-	char choice;
-	string password;// = "Password";
-	string inputFile;// = "plaintext";
-	string outputFile;// = "outputFile.txt";
+	bool streamBased = false;
+	bool encrypt = false;
+
+	po::options_description desc("Allowed options");
+	desc.add_options()("help", "produce help message")
+		("decrypt", po::value<bool>(), "decrypt the incoming file")
+		("password", po::value<std::string>(), "password to use as the key")
+		("stream", "operate the utility with streams");
+
+	po::variables_map vm;
+	po::store(po::parse_command_line(argc, argv, desc), vm);
+	po::notify(vm);
+
+	if (vm.count("help"))
+	{
+		cout << desc << endl;
+		return 1;
+	}
+
+	/*if (vm.count("stream"))
+	{
+		streamBased = vm["stream"].as<bool>();
+	}*/
+	streamBased = vm.count("stream");
 	
-	cout << "What file do you want to read? ";
-	cin >> inputFile;
+
+	//try {
+	//	TCLAP::CmdLine cmd("Command description message", ' ', "0.9");
+
+	//	TCLAP::SwitchArg decryption("d","decrypt","Decrypt the input file and output to stream", false);
+	//	TCLAP::SwitchArg stream("s", "stream", "Operate the encryption utility in a stream", false);
+
+	//	cmd.parse(argc, argv);
+	//	encrypt = decryption.getValue();
+	//	streamBased = stream.getValue();
+	//}
+	//catch (TCLAP::ArgException &e)
+	//{
+	//	cerr << "Error parsing command line arguments" << endl;
+	//}
+	if (streamBased)
+	{
+		if (vm.count("decrypt"))
+		{
+			decryptFile(vm["password"].as<std::string>(), "", "", true);
+		}
+		else
+		{
+			encryptFile(vm["password"].as<std::string>(), "", "", true);
+		}
+	}
+	else
+	{
+		char choice;
+		string password;// = "Password";
+		string inputFile;// = "plaintext";
+		string outputFile;// = "outputFile.txt";
+
+		cout << "What file do you want to read? ";
+		cin >> inputFile;
+
+		cout << "Do you want to (e)ncrypt or (d)ecrypt? ";
+		cin >> choice;
+
+		cout << "What password do you want to use? ";
+		cin >> password;
+
+		cout << "What file do you want to output to? ";
+		cin >> outputFile;
+		if (choice == 'e')
+			//encryptFile(password, inputFile, outputFile);
+			encrypt = true;
+		else if (choice == 'd')
+			//decryptFile(password, inputFile, outputFile);
+			encrypt = false;
+	}
+
 	
-	cout << "Do you want to (e)ncrypt or (d)ecrypt? ";
-	cin >> choice;
 	
-	cout << "What password do you want to use? ";
-	cin >> password;
-	
-	cout << "What file do you want to output to? ";
-	cin >> outputFile;
-	
-	if (choice == 'e')
-		encryptFile(password, inputFile, outputFile);
-	else if (choice == 'd')
-		decryptFile(password, inputFile, outputFile);
+	//if (choice == 'e')
+	//	encryptFile(password, inputFile, outputFile);
+	//else if (choice == 'd')
+	//	decryptFile(password, inputFile, outputFile);
 	return 0;
 }
 
-void decryptFile(string password, string inputFileName, string outputFileName)
+void decryptFile(string password, string inputFileName, string outputFileName, bool streamBased)
 {
 	string encryptSalt = ENCRYPTION_KEY_SALT;
 	string hmacSalt = HMAC_SALT;
@@ -85,32 +160,48 @@ void decryptFile(string password, string inputFileName, string outputFileName)
 	byte iv[AES::BLOCKSIZE];
 	string cipherText;
 	
-	readFile(inputFileName, salt, hmac, iv, cipherText);
+	if (streamBased)
+	{
+		readStream(cin, salt, hmac, iv, cipherText);
+	}
+	else
+	{
+		readFile(inputFileName, salt, hmac, iv, cipherText);
+
+	}
 	
-	cout << "Encrypted ciphertext: " << cipherText << endl;
+	//cout << "Encrypted ciphertext: " << cipherText << endl;
 	
 	generateKeys(password, encryptSalt, hmacSalt, salt, masterKey, encryptionKey, hmacKey);
 	
 	if (verifyHMAC(hmacKey, hmac, cipherText))
 	{
 		// Good
-		cout << "Ciphertext verified according to HMAC." << endl;
+		cerr << "Ciphertext verified according to HMAC." << endl;
 	}
 	else
 	{
 		// Bad
-		cout << "Ciphertext could not be verified. Aborting." << endl;
+		cerr << "Ciphertext could not be verified. Aborting." << endl;
 		return;
 	}
 	
 	string recoveredText = decrypt(encryptionKey, iv, AES::BLOCKSIZE, cipherText);
-	StringSource fileOutput(recoveredText, true, new FileSink(outputFileName.c_str()));
+
+	if (streamBased)
+	{
+		cout << recoveredText << endl;
+	}
+	else
+	{
+		StringSource fileOutput(recoveredText, true, new FileSink(outputFileName.c_str()));
+	}
 	
 	// Would normally be commented out
-	cout << "Recovered Text: " << recoveredText << endl;
+	//cout << "Recovered Text: " << recoveredText << endl;
 }
 
-void encryptFile(string password, string inputFileName, string outputFileName)
+void encryptFile(string password, string inputFileName, string outputFileName, bool streamBased)
 {
 	string encryptSalt = ENCRYPTION_KEY_SALT;
 	string hmacSalt = HMAC_SALT;
@@ -130,8 +221,7 @@ void encryptFile(string password, string inputFileName, string outputFileName)
 //	printKey(masterKey, "Master Key: ");
 //	printKey(encryptionKey, "Encryption Key: ");
 //	printKey(hmacKey, "HMAC Key: ");
-	
-	
+
 	// Now on to encryption
 	byte iv[AES::BLOCKSIZE];
 	OS_GenerateRandomBlock(false, iv, AES::BLOCKSIZE);
@@ -140,13 +230,20 @@ void encryptFile(string password, string inputFileName, string outputFileName)
 	
 	// Encryption
 
-	FileSource inputFile(inputFileName.c_str(), true, new StringSink(plainText));
-	
-	cout << "Plaintext: " << plainText << endl;
+	if (streamBased)
+	{
+		FileSource inputStream(cin, true, new StringSink(plainText));
+	}
+	else
+	{
+		FileSource inputFile(inputFileName.c_str(), true, new StringSink(plainText));
+	}
+
+	//cout << "Plaintext: " << plainText << endl;
 	
 	string cipherText = encrypt(encryptionKey, iv, AES::BLOCKSIZE, plainText.c_str(), plainText.size());
 	
-	cout << "Ciphertext: " << cipherText << endl;
+	//cout << "Ciphertext: " << cipherText << endl;
 	string hmacOfEncryptedText;
 	
 	// HMAC the encrypted text
@@ -172,13 +269,28 @@ void encryptFile(string password, string inputFileName, string outputFileName)
 	ArraySource fI(iv, AES::BLOCKSIZE, true, new Base64Encoder(new StringSink(finalIV), false));
 	StringSource fC(cipherText, true, new Base64Encoder(new StringSink(finalCipher), false));
 
-	ofstream file;
-	file.open(outputFileName.c_str());	
-	
-	file << finalSalt << endl;
-	file << finalHMAC << endl;
-	file << finalIV << endl;
-	file << finalCipher << endl;
+
+
+	if (streamBased)
+	{
+		cout << finalSalt << endl;
+		cout << finalHMAC << endl;
+		cout << finalIV << endl;
+		cout << finalCipher << endl;
+	}
+	else
+	{
+		ofstream file;
+		file.open(outputFileName.c_str());
+
+		file << finalSalt << endl;
+		file << finalHMAC << endl;
+		file << finalIV << endl;
+		file << finalCipher << endl;
+
+		file.close();
+	}
+
 	
 }
 
@@ -212,32 +324,61 @@ string decrypt(SecByteBlock& decryptionKey, byte iv[], int ivLength, string ciph
 void readFile(string fileName, SecByteBlock& salt, string& hmac, byte iv[], string& cipherText)
 {
 	ifstream input(fileName.c_str());
-	string text;
-	
-	getline(input, text);
-	StringSource sS(text, true, new Base64Decoder(new ArraySink(salt,salt.size())));
-	
-	//printKey(salt, "Recovered salt: ");
-	
-	string hmacEncoded;
-	getline(input, hmacEncoded);
-	StringSource sH(hmacEncoded, true, new Base64Decoder(new StringSink(hmac)));
-	
-	//printText(hmac, "Recovered hmac: ");
-	
-	string encodedIV;
-	getline(input, encodedIV);
-	StringSource sI(encodedIV, true, new Base64Decoder(new ArraySink(iv,AES::BLOCKSIZE)));
-	
-	string cipherEncoded;
-	getline(input, cipherEncoded);
-	StringSource sC(cipherEncoded, true, new Base64Decoder(new StringSink(cipherText)));
+	readStream(input, salt, hmac, iv, cipherText);
+	input.close();
+	//string text;
+	//
+	//getline(input, text);
+	//StringSource sS(text, true, new Base64Decoder(new ArraySink(salt,salt.size())));
+	//
+	////printKey(salt, "Recovered salt: ");
+	//
+	//string hmacEncoded;
+	//getline(input, hmacEncoded);
+	//StringSource sH(hmacEncoded, true, new Base64Decoder(new StringSink(hmac)));
+	//
+	////printText(hmac, "Recovered hmac: ");
+	//
+	//string encodedIV;
+	//getline(input, encodedIV);
+	//StringSource sI(encodedIV, true, new Base64Decoder(new ArraySink(iv,AES::BLOCKSIZE)));
+	//
+	//string cipherEncoded;
+	//getline(input, cipherEncoded);
+	//StringSource sC(cipherEncoded, true, new Base64Decoder(new StringSink(cipherText)));
 	
 	//printText(cipherText, "Recovered cipher: ");
 	
 	
 }
 
+void readStream(istream& input, SecByteBlock& salt, string& hmac, byte iv[], string& cipherText)
+{
+	string text;
+
+	getline(input, text);
+	StringSource sS(text, true, new Base64Decoder(new ArraySink(salt, salt.size())));
+
+	//printKey(salt, "Recovered salt: ");
+
+	string hmacEncoded;
+	getline(input, hmacEncoded);
+	StringSource sH(hmacEncoded, true, new Base64Decoder(new StringSink(hmac)));
+
+	//printText(hmac, "Recovered hmac: ");
+
+	string encodedIV;
+	getline(input, encodedIV);
+	StringSource sI(encodedIV, true, new Base64Decoder(new ArraySink(iv, AES::BLOCKSIZE)));
+
+	string cipherEncoded;
+	getline(input, cipherEncoded);
+	StringSource sC(cipherEncoded, true, new Base64Decoder(new StringSink(cipherText)));
+
+	//printText(cipherText, "Recovered cipher: ");
+	
+
+}
 
 void generateKeys(string password, string encryptSalt, string hmacSalt, 
 	SecByteBlock& salt, SecByteBlock& masterKey, SecByteBlock& encryptionKey, SecByteBlock& hmacKey)
@@ -275,6 +416,9 @@ bool verifyHMAC(SecByteBlock& key, string mac, string cipherText)
 	return false;
 }
 
+
+// A utility function to encode a raw text into hex and print with the passed
+//	prefix
 void printText(string rawText, const char* prefix)
 {
 	string encoded;
@@ -282,6 +426,7 @@ void printText(string rawText, const char* prefix)
 	cout << prefix << encoded << endl;
 
 }
+
 
 void printKey(SecByteBlock& key, const char* prefix)
 {
